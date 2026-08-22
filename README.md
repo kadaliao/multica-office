@@ -88,4 +88,8 @@ Playwright runs against the built release client served by the production bridge
 
 `THIRD_PARTY_NOTICES.txt` is generated from the locked production dependency graph. `npm run build` verifies it is current and copies it into the built client as `apps/web/dist/THIRD_PARTY_NOTICES.txt`. After dependency updates, regenerate it with `npm run notices:generate` and review the diff.
 
-The office artwork is drawn procedurally by this project and does not include LimeZu, The Office, or Munder Difflin assets. Third-party notices do not license Multica Office itself. The owner must choose the project's license or explicit retained-rights distribution terms before any public distributable release.
+The office artwork is drawn procedurally by this project and does not include LimeZu, The Office, or Munder Difflin assets.
+
+## License
+
+Multica Office is released under the MIT License. See `LICENSE`. Third-party software distributed with the application retains its original terms in `THIRD_PARTY_NOTICES.txt`.

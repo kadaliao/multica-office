@@ -45,7 +45,12 @@ function compareText(left, right) {
 }
 
 function normalize(text) {
-	return text.replaceAll("\r\n", "\n").trim();
+	return text
+		.replaceAll("\r\n", "\n")
+		.split("\n")
+		.map((line) => line.trimEnd())
+		.join("\n")
+		.trim();
 }
 
 async function generateNotice() {
