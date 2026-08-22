@@ -174,7 +174,8 @@ export function adaptRuns(input: unknown): OfficeRun[] {
 
 export function isActiveAgentIssue(issue: OfficeIssue): boolean {
 	return (
-		issue.assignee?.type === "agent" && !terminalIssueStatuses.has(issue.status)
+		(issue.assignee?.type === "agent" || issue.assignee?.type === "squad")
+		&& !terminalIssueStatuses.has(issue.status)
 	);
 }
 
@@ -234,17 +235,15 @@ export function mapAgentStates(
 		let state: OfficeState = "idle";
 		if (!runtime || runtime.state !== "online" || runtimeStale)
 			state = "offline";
-		else if (rawStatus === "working" || running) state = "working";
+		else if (running || (rawStatus === "working" && activeIssue)) state = "working";
 		else if (blocked) state = "blocked";
 		else if (waiting || activeIssue) state = "queued";
 		else if (recentDone) state = "done";
 
 		const selectedRun = running ?? waiting ?? recentDone;
-		const selectedIssue =
-			activeIssue ??
-			(selectedRun
+		const selectedIssue = selectedRun
 				? issues.find((issue) => issue.id === selectedRun.issueId)
-				: undefined);
+				: activeIssue;
 		return {
 			...agent,
 			state,

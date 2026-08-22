@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, PlugZap, RefreshCw, RotateCcw, Users } from "lucide-react";
 import type { OfficeAgent, OfficeState } from "@multica-office/contracts";
 import { OfficeScene } from "./OfficeScene.js";
-import { filterAgents, issueForAgent, OFFICE_STATES, runtimeLabelForAgent, sourceProblems, STATE_LABELS, timeAgo } from "./model.js";
+import { filterAgents, issueForAgent, OFFICE_STATES, requiresAuthentication, runtimeLabelForAgent, sourceProblems, STATE_LABELS, timeAgo } from "./model.js";
 import { useOfficeData } from "./useOfficeData.js";
 
 function StatusMark({ state }: { state: OfficeState }) {
@@ -56,6 +56,7 @@ export function App() {
 	const selectedAgent = snapshot?.agents.find((agent) => agent.id === selectedId);
 	const selectedIssue = snapshot ? issueForAgent(selectedAgent, snapshot.issues) : undefined;
 	const problems = snapshot ? sourceProblems(snapshot) : [];
+	const authRequired = snapshot ? requiresAuthentication(snapshot) : false;
 	const selectAgent = useCallback((id: string) => setSelectedId(id), []);
 
 	if (!snapshot && connection === "loading") return <LoadingView />;
@@ -72,7 +73,8 @@ export function App() {
 				</div>
 			</header>
 
-			{problems.length > 0 && <div className="degraded-banner" role="status"><AlertTriangle size={16} /><span>Some data is stale: {problems.join(", ")}. Last-known values remain visible.</span></div>}
+			{authRequired ? <div className="degraded-banner" role="status"><AlertTriangle size={16} /><span>Multica sign-in is required. Run <code>multica login</code>, then reconnect.</span></div>
+				: problems.length > 0 && <div className="degraded-banner" role="status"><AlertTriangle size={16} /><span>Some data is stale: {problems.join(", ")}. Last-known values remain visible.</span></div>}
 			{refreshError && <div className="refresh-error-banner" role="alert"><AlertTriangle size={16} /><span>Refresh failed: {refreshError} Last-known snapshot remains visible.</span></div>}
 
 			<div className="workspace">
@@ -89,7 +91,7 @@ export function App() {
 					</div>
 					<div className="scene-frame">
 						<OfficeScene agents={visibleAgents} selectedId={selectedId} onSelect={selectAgent} />
-						{visibleAgents.length === 0 && <div className="empty-overlay"><Users size={25} /><strong>{snapshot.agents.length ? "No agents match this filter" : "The office is ready"}</strong><span>{snapshot.agents.length ? "Choose another status to see the floor." : "Agents appear here when the bridge reports them."}</span></div>}
+						{visibleAgents.length === 0 && !authRequired && <div className="empty-overlay"><Users size={25} /><strong>{snapshot.agents.length ? "No agents match this filter" : "The office is ready"}</strong><span>{snapshot.agents.length ? "Choose another status to see the floor." : "Agents appear here when the bridge reports them."}</span></div>}
 					</div>
 				</section>
 

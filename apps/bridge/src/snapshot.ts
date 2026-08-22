@@ -66,7 +66,12 @@ function failedSource(previous: SourceStatus, error: unknown): SourceStatus {
 
 function changedPayload(snapshot: OfficeSnapshot): string {
 	return JSON.stringify({
-		sources: snapshot.sources,
+		sources: Object.fromEntries(
+			SOURCE_NAMES.map((name) => {
+				const { observedAt: _observedAt, ...source } = snapshot.sources[name];
+				return [name, source];
+			}),
+		),
 		agents: snapshot.agents,
 		runtimes: snapshot.runtimes,
 		issues: snapshot.issues,
@@ -267,12 +272,16 @@ export class SnapshotService {
 		const refreshedIssueIds = new Set(
 			successful.map((result) => result.issueId),
 		);
-		const currentIssueIds = new Set(issues.map((issue) => issue.id));
+		const candidateIssueIds = new Set(candidates.map((issue) => issue.id));
 		const retained = (this.lastGood.runs ?? []).filter(
 			(run) =>
-				currentIssueIds.has(run.issueId) && !refreshedIssueIds.has(run.issueId),
+				candidateIssueIds.has(run.issueId)
+				&& !refreshedIssueIds.has(run.issueId),
 		);
-		const runs = [...retained, ...successful.flatMap((result) => result.runs)];
+		const runs = [...retained, ...successful.flatMap((result) => result.runs)]
+			.sort((left, right) =>
+				left.issueId.localeCompare(right.issueId) || left.id.localeCompare(right.id),
+			);
 		return {
 			runs,
 			complete:
@@ -345,8 +354,10 @@ export class SnapshotService {
 				{ now: new Date(generatedAt) },
 			),
 		};
-		if (changedPayload(candidate) === changedPayload(this.snapshot))
+		if (changedPayload(candidate) === changedPayload(this.snapshot)) {
+			this.snapshot = { ...candidate, sequence: this.snapshot.sequence };
 			return this.snapshot;
+		}
 
 		const previous = this.snapshot;
 		this.snapshot = candidate;

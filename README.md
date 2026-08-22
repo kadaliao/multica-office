@@ -8,26 +8,31 @@ Local-first companion application for visualizing a Multica workspace. It combin
 - An authenticated `multica` CLI
 - npm
 
-Install and start the bridge:
+Install, build, and start the release application:
 
 ```bash
 npm install
 MULTICA_BIN="$(command -v multica)" npm run build
-MULTICA_BIN="$(command -v multica)" npm run start:bridge
+MULTICA_BIN="$(command -v multica)" npm start
 ```
 
-Open `http://127.0.0.1:4317/healthz` to check readiness. Set `OFFICE_BRIDGE_PORT` to choose another fixed port. The process rejects non-loopback-style Host headers and always binds to `127.0.0.1`; use the same numeric host in client URLs.
+Open `http://127.0.0.1:4317/`. The release process serves the built client and API from the same loopback origin. `http://127.0.0.1:4317/healthz` reports readiness. Set `OFFICE_BRIDGE_PORT` to choose another fixed port. The process rejects non-loopback-style Host headers and always binds to `127.0.0.1`; use the same numeric host in client URLs.
 
-Start the client in a second terminal:
+For development, start the bridge in one terminal:
 
 ```bash
-OFFICE_DEV_ORIGIN=http://127.0.0.1:5173 MULTICA_BIN="$(command -v multica)" npm run dev:bridge
+MULTICA_BIN="$(command -v multica)" npm run dev:bridge
+```
+
+Start the Vite client in a second terminal:
+
+```bash
 npm run dev:web
 ```
 
-Open `http://127.0.0.1:5173`. For UI development without a running bridge, append `?fixture=ready`; `empty`, `degraded`, and `offline` fixtures cover the primary recovery states.
+Open `http://127.0.0.1:5173`. For UI development without a running bridge, append `?fixture=ready`; `empty`, `degraded`, `auth-required`, and `offline` fixtures cover the primary recovery states.
 
-For a separately served local Vite client, set one exact origin, for example `OFFICE_DEV_ORIGIN=http://127.0.0.1:5173`. Production leaves CORS disabled. Wildcards, `Origin: null`, foreign origins, and credentialed cross-origin access are not supported.
+The Vite development server proxies API and SSE requests to the loopback bridge. For another separately served local client, set one exact origin, for example `OFFICE_DEV_ORIGIN=http://127.0.0.1:5173`. Production leaves CORS disabled. Wildcards, `Origin: null`, foreign origins, and credentialed cross-origin access are not supported.
 
 ## API
 
@@ -48,7 +53,7 @@ multica issue list --limit 100 --offset <adapter-owned offset> --output json
 multica issue runs <adapter-validated issue UUID> --output json
 ```
 
-Issue pages are followed until `has_more` is false. Runs are requested only for non-terminal issues directly assigned to agents, with a bounded rotating set. Runner concurrency defaults to three, list commands time out after five seconds, run commands after three seconds, and stdout is capped at 2 MiB.
+Issue pages are followed until `has_more` is false. Runs are requested only for non-terminal issues assigned directly to agents or to squads, with a bounded rotating set. Runner concurrency defaults to three, list commands time out after five seconds, run commands after three seconds, and stdout is capped at 2 MiB.
 
 Adapters validate the CLI shape and rebuild allowlisted contract objects. They do not return raw Agent instructions/config/env, Runtime device metadata/headers, Issue descriptions/metadata/properties, or Run work directories/results/attribution. Raw stdout and stderr are never exposed by HTTP errors. Unknown enum values map to `unknown`; source failures retain last-good data and mark only that source stale/error.
 
@@ -74,6 +79,10 @@ The bridge polls every five seconds while an SSE client is connected and every 3
 npm test
 npm run typecheck
 npm run build
+npx playwright install chromium
+npm run test:e2e
 ```
 
-Tests cover adapter allowlisting and enum drift, state priority, fixed argv and invalid parameter rejection, timeout/output limits, authentication errors, partial-source last-good behavior, and Host/Origin/API restrictions.
+Playwright runs against the built release client served by the production bridge process. Tests cover adapter allowlisting and enum drift, state priority, fixed argv and invalid parameter rejection, timeout/output limits, authentication errors, partial-source last-good behavior, and Host/Origin/API restrictions.
+
+The office artwork is drawn procedurally by this project and does not include LimeZu, The Office, or Munder Difflin assets. This repository currently has no standalone license and does not grant redistribution rights; choose and add a license before any public distributable release.

@@ -106,5 +106,28 @@ export function fixtureFor(name: string, agentCount?: number): OfficeSnapshot | 
 			},
 		},
 	};
+	if (name === "auth-required") return {
+		...fixtureSnapshot,
+		agents: [],
+		issues: [],
+		runs: [],
+		sources: Object.fromEntries(
+			Object.keys(fixtureSnapshot.sources).map((source) => [source, {
+				state: "error",
+				error: { code: "auth_required", retryable: false, message: "Multica CLI is not signed in." },
+			}]),
+		) as OfficeSnapshot["sources"],
+	};
+	if (name === "stale-auth-required") return {
+		...fixtureSnapshot,
+		sources: {
+			...fixtureSnapshot.sources,
+			agents: {
+				state: "stale",
+				observedAt: now,
+				error: { code: "auth_required", retryable: false, message: "Multica CLI is not signed in." },
+			},
+		},
+	};
 	return null;
 }

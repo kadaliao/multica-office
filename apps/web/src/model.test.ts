@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fixtureSnapshot } from "./fixtures.js";
-import { filterAgents, issueForAgent, runtimeLabelForAgent, sourceProblems, timeAgo } from "./model.js";
+import { filterAgents, issueForAgent, requiresAuthentication, runtimeLabelForAgent, sourceProblems, timeAgo } from "./model.js";
 
 describe("office view model", () => {
 	it("filters every mapped office state", () => {
@@ -39,6 +39,11 @@ describe("office view model", () => {
 			sources: { ...fixtureSnapshot.sources, issues: { state: "stale" as const } },
 		};
 		expect(sourceProblems(degraded)).toEqual(["issues stale"]);
+		expect(requiresAuthentication(degraded)).toBe(false);
+		expect(requiresAuthentication({
+			...degraded,
+			sources: { ...degraded.sources, issues: { state: "stale", error: { code: "auth_required", retryable: false, message: "Sign in." } } },
+		})).toBe(true);
 	});
 
 	it("formats compact relative time", () => {

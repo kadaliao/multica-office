@@ -4,7 +4,7 @@ import { fixtureFor } from "./fixtures.js";
 import { SnapshotAcceptance } from "./snapshotAcceptance.js";
 
 export type ConnectionState = "loading" | "live" | "reconnecting" | "offline";
-const BRIDGE_URL = import.meta.env.VITE_OFFICE_BRIDGE_URL ?? "http://127.0.0.1:4317";
+const BRIDGE_URL = import.meta.env.VITE_OFFICE_BRIDGE_URL ?? window.location.origin;
 
 async function getSnapshot(): Promise<OfficeSnapshot> {
 	const response = await fetch(`${BRIDGE_URL}/v1/snapshot`, { cache: "no-store" });
@@ -46,10 +46,52 @@ export function useOfficeData() {
 		if (fixture) return;
 		let cancelled = false;
 		const acceptance = acceptanceRef.current!;
-		let streamGeneration = acceptance.beginStream();
-		const initialTicket = acceptance.beginRequest();
-		let opened = false;
+		let stream: EventSource | null = null;
+		let streamToken = 0;
 		setConnection((current) => current === "loading" ? "loading" : "reconnecting");
+
+		const closeStream = () => {
+			streamToken += 1;
+			stream?.close();
+			stream = null;
+		};
+		const openStream = () => {
+			if (cancelled || document.hidden || stream) return;
+			const token = ++streamToken;
+			let streamGeneration = acceptance.beginStream();
+			let opened = false;
+			const nextStream = new EventSource(`${BRIDGE_URL}/v1/events`);
+			stream = nextStream;
+			nextStream.addEventListener("snapshot", (event) => {
+				if (cancelled || token !== streamToken) return;
+				const next = JSON.parse((event as MessageEvent<string>).data) as OfficeSnapshot;
+				if (!acceptance.acceptStream(streamGeneration, next)) return;
+				setSnapshot(next);
+				setConnection("live");
+				setError(null);
+				setRefreshError(null);
+			});
+			nextStream.onopen = () => {
+				if (cancelled || token !== streamToken) return;
+				if (opened) streamGeneration = acceptance.beginStream();
+				else opened = true;
+				setConnection("live");
+			};
+			nextStream.onerror = () => {
+				if (!cancelled && token === streamToken)
+					setConnection((current) => current === "loading" ? "loading" : "reconnecting");
+			};
+		};
+		const handleVisibility = () => {
+			if (document.hidden) closeStream();
+			else {
+				setConnection("reconnecting");
+				openStream();
+			}
+		};
+		document.addEventListener("visibilitychange", handleVisibility);
+		openStream();
+		const initialTicket = acceptance.beginRequest();
 		void getSnapshot().then((initial) => {
 			if (cancelled || !acceptance.acceptRequest(initialTicket)) return;
 			setSnapshot(initial);
@@ -61,29 +103,10 @@ export function useOfficeData() {
 			setError("The local bridge is not responding.");
 			setConnection("offline");
 		});
-
-		const stream = new EventSource(`${BRIDGE_URL}/v1/events`);
-		stream.addEventListener("snapshot", (event) => {
-			if (cancelled) return;
-			const next = JSON.parse((event as MessageEvent<string>).data) as OfficeSnapshot;
-			if (!acceptance.acceptStream(streamGeneration, next)) return;
-			setSnapshot(next);
-			setConnection("live");
-			setError(null);
-			setRefreshError(null);
-		});
-		stream.onopen = () => {
-			if (cancelled) return;
-			if (opened) streamGeneration = acceptance.beginStream();
-			else opened = true;
-			setConnection("live");
-		};
-		stream.onerror = () => {
-			if (!cancelled) setConnection((current) => current === "loading" ? "loading" : "reconnecting");
-		};
 		return () => {
 			cancelled = true;
-			stream.close();
+			document.removeEventListener("visibilitychange", handleVisibility);
+			closeStream();
 		};
 	}, [fixture, generation]);
 

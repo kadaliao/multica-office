@@ -157,4 +157,36 @@ describe("CLI adapters", () => {
 		expect(completedState("invalid")).toBe("idle");
 		expect(completedState(null)).toBe("idle");
 	});
+
+	it("uses a squad run's issue instead of an unrelated direct assignment", () => {
+		const agents = adaptAgents([{ id: agentId, name: "Ada", runtime_id: runtimeId, status: "working", updated_at: now.toISOString() }]);
+		const runtimes = adaptRuntimes([{ id: runtimeId, name: "Local", status: "online", last_seen_at: now.toISOString() }]);
+		const squadIssueId = "55555555-5555-4555-8555-555555555555";
+		const issues = adaptIssuePage({
+			issues: [
+				{ id: issueId, identifier: "OFF-1", title: "Direct", status: "todo", assignee_type: "agent", assignee_id: agentId, updated_at: now.toISOString() },
+				{ id: squadIssueId, identifier: "OFF-2", title: "Squad", status: "in_progress", assignee_type: "squad", assignee_id: "66666666-6666-4666-8666-666666666666", updated_at: now.toISOString() },
+			],
+			has_more: false,
+			offset: 0,
+			limit: 100,
+		}).issues;
+		const runs = adaptRuns([{ id: runId, issue_id: squadIssueId, agent_id: agentId, runtime_id: runtimeId, status: "running", started_at: now.toISOString(), completed_at: null }]);
+
+		expect(mapAgentStates(agents, runtimes, issues, runs, { now })[0]).toMatchObject({
+			state: "working",
+			issueId: squadIssueId,
+			runId,
+		});
+	});
+
+	it("does not keep raw working state after the agent's issue becomes terminal", () => {
+		const agents = adaptAgents([{ id: agentId, name: "Ada", runtime_id: runtimeId, status: "working", updated_at: now.toISOString() }]);
+		const runtimes = adaptRuntimes([{ id: runtimeId, name: "Local", status: "online", last_seen_at: now.toISOString() }]);
+		expect(mapAgentStates(agents, runtimes, [], [], { now })[0]).toMatchObject({
+			state: "idle",
+			issueId: null,
+			runId: null,
+		});
+	});
 });

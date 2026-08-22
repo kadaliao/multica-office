@@ -39,6 +39,12 @@ export function sourceProblems(snapshot: OfficeSnapshot): string[] {
 		.map(([name, source]) => `${name} ${source.state}`);
 }
 
+export function requiresAuthentication(snapshot: OfficeSnapshot): boolean {
+	return Object.values(snapshot.sources).some(
+		(source) => source.error?.code === "auth_required",
+	);
+}
+
 export function timeAgo(value: string, now = Date.now()): string {
 	const timestamp = Date.parse(value);
 	if (!Number.isFinite(now) || !Number.isFinite(timestamp)) return "unavailable";

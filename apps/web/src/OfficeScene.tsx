@@ -248,6 +248,7 @@ export function OfficeScene({ agents, selectedId, onSelect }: { agents: OfficeAg
 		app.stage.removeChildren().forEach((child) => child.destroy({ children: true }));
 		const current = sceneDataRef.current;
 		animatedRef.current = buildOffice(app, current.agents, current.selectedId, current.onSelect, current.labels);
+		app.render();
 	}, []);
 
 	useEffect(() => {
@@ -322,6 +323,7 @@ export function OfficeScene({ agents, selectedId, onSelect }: { agents: OfficeAg
 				releaseLifecycle = bindRendererLifecycle({
 					canvas: app.canvas,
 					visibilitySource: document,
+					motionPreferenceSource: window.matchMedia("(prefers-reduced-motion: reduce)"),
 					ticker: app.ticker,
 					recoveryTimeoutMs: CONTEXT_RECOVERY_TIMEOUT_MS,
 					onContextLost: (lost) => {

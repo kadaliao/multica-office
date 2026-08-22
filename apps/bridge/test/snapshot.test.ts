@@ -141,4 +141,85 @@ describe("snapshot service", () => {
 			error: { code: "auth_required", retryable: false },
 		});
 	});
+
+	it("polls squad issues and clears retained runs after a terminal transition", async () => {
+		let issueStatus = "in_progress";
+		let runCalls = 0;
+		const runner: CliRunner = {
+			async run(command) {
+				if (command.key === "issues") {
+					const page = output(command) as { issues: Array<Record<string, unknown>> } & Record<string, unknown>;
+					page.issues[0] = { ...page.issues[0], status: issueStatus, assignee_type: "squad", assignee_id: "55555555-5555-4555-8555-555555555555" };
+					return page;
+				}
+				if (command.key === "issueRuns") runCalls += 1;
+				return output(command);
+			},
+		};
+		const service = new SnapshotService(runner, { now: () => new Date(timestamp) });
+		const active = await service.refresh();
+		expect(runCalls).toBe(1);
+		expect(active.agents[0]).toMatchObject({ state: "working", issueId, runId });
+
+		issueStatus = "done";
+		const terminal = await service.refresh();
+		expect(runCalls).toBe(1);
+		expect(terminal.runs).toEqual([]);
+		expect(terminal.agents[0]).toMatchObject({ state: "idle", issueId: null, runId: null });
+	});
+
+	it("keeps retained and refreshed runs stable across bounded rotation", async () => {
+		const secondIssueId = "55555555-5555-4555-8555-555555555555";
+		const secondRunId = "66666666-6666-4666-8666-666666666666";
+		const runner: CliRunner = {
+			async run(command) {
+				if (command.key === "issues") return {
+					issues: [
+						...(output(command) as { issues: unknown[] }).issues,
+						{ id: secondIssueId, identifier: "OFF-2", title: "Second", status: "in_progress", priority: "medium", assignee_type: "agent", assignee_id: agentId, updated_at: timestamp },
+					],
+					has_more: false,
+					offset: command.offset,
+					limit: 100,
+				};
+				if (command.key === "issueRuns" && command.issueId === secondIssueId) return [{ id: secondRunId, issue_id: secondIssueId, agent_id: agentId, runtime_id: runtimeId, status: "queued", started_at: null, completed_at: null }];
+				return output(command);
+			},
+		};
+		const service = new SnapshotService(runner, { now: () => new Date(timestamp), maxRunIssues: 1 });
+		await service.refresh();
+		const warmed = await service.refresh();
+		expect(warmed.runs.map((run) => run.id)).toEqual([runId, secondRunId]);
+		for (let index = 0; index < 4; index += 1) {
+			const next = await service.refresh();
+			expect(next.sequence).toBe(warmed.sequence);
+			expect(next.runs.map((run) => run.id)).toEqual([runId, secondRunId]);
+		}
+	});
+
+	it("advances source freshness without broadcasting an unchanged snapshot", async () => {
+		let now = new Date(timestamp);
+		let failAgents = false;
+		const runner: CliRunner = {
+			async run(command) {
+				if (failAgents && command.key === "agents") throw new Error("down");
+				return output(command);
+			},
+		};
+		const service = new SnapshotService(runner, { now: () => now });
+		let broadcasts = 0;
+		service.subscribe(() => { broadcasts += 1; });
+		const first = await service.refresh();
+		now = new Date("2026-01-01T00:00:25Z");
+		const unchanged = await service.refresh();
+		expect(unchanged.sequence).toBe(first.sequence);
+		expect(unchanged.sources.agents.observedAt).toBe("2026-01-01T00:00:25.000Z");
+		expect(broadcasts).toBe(1);
+
+		failAgents = true;
+		now = new Date("2026-01-01T00:00:26Z");
+		const stale = await service.refresh();
+		expect(stale.sources.agents).toMatchObject({ state: "stale", observedAt: "2026-01-01T00:00:25.000Z" });
+		expect(broadcasts).toBe(2);
+	});
 });

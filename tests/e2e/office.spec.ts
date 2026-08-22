@@ -78,6 +78,9 @@ async function installControllableEventSource(page: import("@playwright/test").P
 				for (const stream of streams) if (!stream.closed) stream.onopen?.();
 			},
 		});
+		Object.defineProperty(window, "__activeOfficeStreams", {
+			get: () => streams.filter((stream) => !stream.closed).length,
+		});
 	});
 }
 
@@ -173,6 +176,18 @@ async function expectLabelsEndAtGraphemeBoundaries(page: import("@playwright/tes
 		expect(graphemes.some((_grapheme, count) => graphemes.slice(0, count + 1).join("") === prefix)).toBe(true);
 	}
 }
+
+test("built release server delivers the runnable client and same-origin API", async ({ page }) => {
+	const response = await page.goto("/");
+	expect(response?.status()).toBe(200);
+	await expect(page.getByRole("heading", { name: "Today's floor" })).toBeVisible();
+	await expectNonBlankCanvas(page);
+	const health = await page.evaluate(async () => {
+		const result = await fetch("/healthz");
+		return { status: result.status, body: await result.json() as { status: string } };
+	});
+	expect(health).toEqual({ status: 200, body: expect.objectContaining({ status: "ok" }) });
+});
 
 test("desktop office is interactive and visually populated", async ({ page }, testInfo) => {
 	await page.goto("/?fixture=ready");
@@ -339,6 +354,50 @@ test("ticker honors an initially hidden document and later visibility changes", 
 	await expect(scene).toHaveAttribute("data-ticker", "stopped");
 });
 
+test("hidden pages close the snapshot stream and reconnect when visible", async ({ page }) => {
+	await installControllableEventSource(page);
+	await page.route("http://127.0.0.1:4317/v1/snapshot", (route) => route.fulfill({
+		status: 200,
+		contentType: "application/json",
+		body: JSON.stringify(liveSnapshot(1)),
+	}));
+	await page.addInitScript(() => {
+		let hidden = false;
+		Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+		Object.defineProperty(window, "__setOfficeHidden", {
+			value: (next: boolean) => {
+				hidden = next;
+				document.dispatchEvent(new Event("visibilitychange"));
+			},
+		});
+	});
+	await page.goto("/");
+	await expect.poll(() => page.evaluate(() => (window as unknown as { __activeOfficeStreams: number }).__activeOfficeStreams)).toBe(1);
+	await page.evaluate(() => (window as unknown as { __setOfficeHidden: (hidden: boolean) => void }).__setOfficeHidden(true));
+	await expect.poll(() => page.evaluate(() => (window as unknown as { __activeOfficeStreams: number }).__activeOfficeStreams)).toBe(0);
+	await page.evaluate(() => (window as unknown as { __setOfficeHidden: (hidden: boolean) => void }).__setOfficeHidden(false));
+	await expect.poll(() => page.evaluate(() => (window as unknown as { __activeOfficeStreams: number }).__activeOfficeStreams)).toBe(1);
+});
+
+test("reduced motion keeps on-demand snapshot rendering", async ({ page }) => {
+	await page.emulateMedia({ reducedMotion: "reduce" });
+	await installControllableEventSource(page);
+	await page.route("http://127.0.0.1:4317/v1/snapshot", (route) => route.fulfill({
+		status: 200,
+		contentType: "application/json",
+		body: JSON.stringify(liveSnapshot(1, ["First Agent"])),
+	}));
+	await page.goto("/");
+	const scene = page.locator(".office-scene");
+	await expect(scene).toHaveAttribute("data-ticker", "stopped");
+	await expect(scene).toHaveAttribute("data-agent-count", "1");
+	const before = await page.locator("canvas.office-canvas").screenshot();
+	await page.evaluate((next) => (window as unknown as { __emitOfficeSnapshot: (snapshot: unknown) => void }).__emitOfficeSnapshot(next), liveSnapshot(2, ["First Agent", "Second Agent", "Third Agent"]));
+	await expect(scene).toHaveAttribute("data-agent-count", "3");
+	const after = await page.locator("canvas.office-canvas").screenshot();
+	expect(before.equals(after)).toBe(false);
+});
+
 test("manual refresh failure preserves data and clears after refresh and SSE recovery", async ({ page }) => {
 	let failSnapshot = false;
 	let sequence = 100;
@@ -408,7 +467,7 @@ test("manual refresh failure preserves data and clears after refresh and SSE rec
 	await expect(page.getByText("1 agents · snapshot 777")).toBeVisible();
 });
 
-test("native cross-port EventSource receives snapshots with validated SSE CORS", async ({ page }) => {
+test("development SSE returns validated CORS headers and streamed snapshots", async () => {
 	const port = await availableLoopbackPort();
 	const runner: CliRunner = {
 		async run(command) {
@@ -417,28 +476,39 @@ test("native cross-port EventSource receives snapshots with validated SSE CORS",
 		},
 	};
 	const service = new SnapshotService(runner);
-	const bridge = buildServer(service, { port, developmentOrigin: "http://127.0.0.1:5173" });
+	const bridge = buildServer(service, { port, developmentOrigin: "http://127.0.0.1:4317" });
 	await bridge.listen({ host: "127.0.0.1", port });
 	const eventsUrl = `http://127.0.0.1:${port}/v1/events`;
 	try {
-		const headerResponse = await fetch(eventsUrl, { headers: { origin: "http://127.0.0.1:5173" } });
-		expect(headerResponse.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:5173");
+		const headerResponse = await fetch(eventsUrl, { headers: { origin: "http://127.0.0.1:4317" } });
+		expect(headerResponse.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:4317");
 		expect(headerResponse.headers.get("vary")).toBe("Origin");
 		expect(headerResponse.headers.get("content-type")).toContain("text/event-stream");
-		await headerResponse.body?.cancel();
-
-		await page.goto("/?fixture=ready");
-		await page.evaluate((url) => {
-			const snapshots: unknown[] = [];
-			const source = new EventSource(url);
-			source.addEventListener("snapshot", (event) => snapshots.push(JSON.parse((event as MessageEvent<string>).data)));
-			Object.assign(window, { __nativeOfficeSource: source, __nativeOfficeSnapshots: snapshots });
-		}, eventsUrl);
-		await expect.poll(() => page.evaluate(() => (window as unknown as { __nativeOfficeSnapshots: unknown[] }).__nativeOfficeSnapshots.length)).toBe(1);
+		const reader = headerResponse.body?.getReader();
+		if (!reader) throw new Error("SSE response did not include a body");
+		const decoder = new TextDecoder();
+		let buffered = "";
+		const nextSnapshot = async (): Promise<OfficeSnapshot> => {
+			for (;;) {
+				const boundary = buffered.indexOf("\n\n");
+				if (boundary >= 0) {
+					const frame = buffered.slice(0, boundary);
+					buffered = buffered.slice(boundary + 2);
+					if (frame.includes("event: snapshot")) {
+						const data = frame.split("\n").find((line) => line.startsWith("data: "))?.slice(6);
+						if (data) return JSON.parse(data) as OfficeSnapshot;
+					}
+				}
+				const { done, value } = await reader.read();
+				if (done) throw new Error("SSE stream ended before a snapshot arrived");
+				buffered += decoder.decode(value, { stream: true });
+			}
+		};
+		expect((await nextSnapshot()).sequence).toBe(0);
 		await service.refresh();
-		await expect.poll(() => page.evaluate(() => (window as unknown as { __nativeOfficeSnapshots: OfficeSnapshot[] }).__nativeOfficeSnapshots.map((snapshot) => snapshot.sequence))).toEqual([0, 1]);
+		expect((await nextSnapshot()).sequence).toBe(1);
+		await reader.cancel();
 	} finally {
-		await page.evaluate(() => (window as unknown as { __nativeOfficeSource?: EventSource }).__nativeOfficeSource?.close()).catch(() => undefined);
 		await bridge.close();
 	}
 });
@@ -448,6 +518,12 @@ test("empty, degraded, and offline states give a recovery path", async ({ page }
 	await expect(page.getByText("The office is ready")).toBeVisible();
 	await page.goto("/?fixture=degraded");
 	await expect(page.getByText(/Some data is stale/)).toBeVisible();
+	await page.goto("/?fixture=auth-required");
+	await expect(page.getByText(/multica login/)).toBeVisible();
+	await expect(page.getByText("The office is ready")).toBeHidden();
+	await page.goto("/?fixture=stale-auth-required");
+	await expect(page.getByText(/multica login/)).toBeVisible();
+	await expect(page.getByRole("heading", { name: "Mira" })).toBeVisible();
 	await page.goto("/?fixture=offline");
 	await expect(page.getByRole("heading", { name: "Office bridge is offline" })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Reconnect" })).toBeVisible();

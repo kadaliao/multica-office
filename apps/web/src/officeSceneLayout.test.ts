@@ -85,6 +85,30 @@ describe("renderer lifecycle", () => {
 		cleanup();
 	});
 
+	it("stops animation when reduced motion is requested and resumes when it clears", () => {
+		const canvas = new EventTarget();
+		const visibility = new EventTarget() as EventTarget & { hidden: boolean };
+		visibility.hidden = false;
+		const motion = new EventTarget() as EventTarget & { matches: boolean };
+		motion.matches = true;
+		const ticker = { start: vi.fn(), stop: vi.fn() };
+		const cleanup = bindRendererLifecycle({
+			canvas,
+			visibilitySource: visibility,
+			motionPreferenceSource: motion,
+			ticker,
+			recoveryTimeoutMs: 100,
+			onContextLost: vi.fn(),
+			onRecoveryTimeout: vi.fn(),
+		});
+
+		expect(ticker.stop).toHaveBeenCalledOnce();
+		motion.matches = false;
+		motion.dispatchEvent(new Event("change"));
+		expect(ticker.start).toHaveBeenCalledOnce();
+		cleanup();
+	});
+
 	it("times out an unrestored context and cancels stale work on cleanup", () => {
 		vi.useFakeTimers();
 		const canvas = new EventTarget();

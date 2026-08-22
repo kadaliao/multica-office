@@ -9,9 +9,16 @@ interface VisibilitySource {
 	removeEventListener: (type: "visibilitychange", listener: EventListener) => void;
 }
 
+interface MotionPreferenceSource {
+	readonly matches: boolean;
+	addEventListener: (type: "change", listener: EventListener) => void;
+	removeEventListener: (type: "change", listener: EventListener) => void;
+}
+
 interface RendererLifecycleOptions {
 	canvas: Pick<HTMLCanvasElement, "addEventListener" | "removeEventListener">;
 	visibilitySource: VisibilitySource;
+	motionPreferenceSource?: MotionPreferenceSource;
 	ticker: TickerControl;
 	recoveryTimeoutMs: number;
 	onContextLost: (lost: boolean) => void;
@@ -19,8 +26,8 @@ interface RendererLifecycleOptions {
 	onVisibilityChange?: (hidden: boolean) => void;
 }
 
-export function syncTickerVisibility(ticker: TickerControl, hidden: boolean): void {
-	if (hidden) ticker.stop();
+export function syncTickerVisibility(ticker: TickerControl, paused: boolean): void {
+	if (paused) ticker.stop();
 	else ticker.start();
 }
 
@@ -32,10 +39,12 @@ export function bindRendererLifecycle(options: RendererLifecycleOptions): () => 
 		if (recoveryTimer !== null) clearTimeout(recoveryTimer);
 		recoveryTimer = null;
 	};
-	const syncVisibility = () => {
+	const syncActivity = () => {
 		if (disposed) return;
-		syncTickerVisibility(options.ticker, options.visibilitySource.hidden);
-		options.onVisibilityChange?.(options.visibilitySource.hidden);
+		const paused = options.visibilitySource.hidden
+			|| options.motionPreferenceSource?.matches === true;
+		syncTickerVisibility(options.ticker, paused);
+		options.onVisibilityChange?.(paused);
 	};
 	const handleContextLost: EventListener = (event) => {
 		event.preventDefault();
@@ -50,18 +59,20 @@ export function bindRendererLifecycle(options: RendererLifecycleOptions): () => 
 	const handleContextRestored: EventListener = () => {
 		clearRecoveryTimer();
 		options.onContextLost(false);
-		syncVisibility();
+		syncActivity();
 	};
 
-	options.visibilitySource.addEventListener("visibilitychange", syncVisibility);
+	options.visibilitySource.addEventListener("visibilitychange", syncActivity);
+	options.motionPreferenceSource?.addEventListener("change", syncActivity);
 	options.canvas.addEventListener("webglcontextlost", handleContextLost);
 	options.canvas.addEventListener("webglcontextrestored", handleContextRestored);
-	syncVisibility();
+	syncActivity();
 
 	return () => {
 		disposed = true;
 		clearRecoveryTimer();
-		options.visibilitySource.removeEventListener("visibilitychange", syncVisibility);
+		options.visibilitySource.removeEventListener("visibilitychange", syncActivity);
+		options.motionPreferenceSource?.removeEventListener("change", syncActivity);
 		options.canvas.removeEventListener("webglcontextlost", handleContextLost);
 		options.canvas.removeEventListener("webglcontextrestored", handleContextRestored);
 	};

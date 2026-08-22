@@ -11,10 +11,11 @@
     "build": "npm run build --workspaces --if-present",
     "test": "vitest run",
     "typecheck": "tsc -b",
+    "start": "npm run start:bridge",
     "start:bridge": "npm run start --workspace @multica-office/bridge",
     "dev:bridge": "npm run dev --workspace @multica-office/bridge",
     "dev:web": "npm run dev --workspace @multica-office/web",
-    "test:e2e": "playwright test"
+    "test:e2e": "npm run build && playwright test"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",
