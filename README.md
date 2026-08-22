@@ -1,6 +1,6 @@
 # Multica Office
 
-Local-first companion application for visualizing a Multica workspace. This repository currently contains the normalized data contract and the loopback-only `office-bridge`; the Pixi.js client is implemented separately against this stable API.
+Local-first companion application for visualizing a Multica workspace. It combines a normalized, loopback-only `office-bridge` with a responsive Pixi.js office client.
 
 ## Requirements
 
@@ -17,6 +17,15 @@ MULTICA_BIN="$(command -v multica)" npm run start:bridge
 ```
 
 Open `http://127.0.0.1:4317/healthz` to check readiness. Set `OFFICE_BRIDGE_PORT` to choose another fixed port. The process rejects non-loopback-style Host headers and always binds to `127.0.0.1`; use the same numeric host in client URLs.
+
+Start the client in a second terminal:
+
+```bash
+OFFICE_DEV_ORIGIN=http://127.0.0.1:5173 MULTICA_BIN="$(command -v multica)" npm run dev:bridge
+npm run dev:web
+```
+
+Open `http://127.0.0.1:5173`. For UI development without a running bridge, append `?fixture=ready`; `empty`, `degraded`, and `offline` fixtures cover the primary recovery states.
 
 For a separately served local Vite client, set one exact origin, for example `OFFICE_DEV_ORIGIN=http://127.0.0.1:5173`. Production leaves CORS disabled. Wildcards, `Origin: null`, foreign origins, and credentialed cross-origin access are not supported.
 

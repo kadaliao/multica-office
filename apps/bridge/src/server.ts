@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from "fastify";
+import type { OutgoingHttpHeaders } from "node:http";
 import type { OfficeEvent, OfficeSnapshot } from "@multica-office/contracts";
 import type { SnapshotService } from "./snapshot.js";
 
@@ -61,13 +62,19 @@ export function buildServer(
 			return reply.code(429).send({ error: "too_many_clients" });
 		}
 
+		const headers: OutgoingHttpHeaders = {};
+		for (const [name, value] of Object.entries(reply.getHeaders())) {
+			if (value === undefined) continue;
+			headers[name] = typeof value === "number"
+				? String(value)
+				: Array.isArray(value) ? value.map(String) : value;
+		}
+		headers["cache-control"] = "no-cache, no-store";
+		headers.connection = "keep-alive";
+		headers["content-type"] = "text/event-stream; charset=utf-8";
+		headers["x-accel-buffering"] = "no";
 		reply.hijack();
-		reply.raw.writeHead(200, {
-			"cache-control": "no-cache, no-store",
-			connection: "keep-alive",
-			"content-type": "text/event-stream; charset=utf-8",
-			"x-accel-buffering": "no",
-		});
+		reply.raw.writeHead(200, headers);
 		clients.add(reply.raw);
 		options.onClientCount?.(clients.size);
 		reply.raw.write(sseFrame("snapshot", service.getSnapshot()));

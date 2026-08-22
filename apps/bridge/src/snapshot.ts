@@ -237,7 +237,7 @@ export class SnapshotService {
 
 	private async fetchRuns(
 		issues: OfficeIssue[],
-	): Promise<{ runs: OfficeRun[]; complete: boolean }> {
+	): Promise<{ runs: OfficeRun[]; complete: boolean; error?: unknown }> {
 		const candidates = issues.filter(isActiveAgentIssue);
 		const max = this.options.maxRunIssues ?? 32;
 		if (!Number.isInteger(max) || max < 1)
@@ -263,6 +263,7 @@ export class SnapshotService {
 		const successful = settled.flatMap((result) =>
 			result.status === "fulfilled" ? [result.value] : [],
 		);
+		const failure = settled.find((result) => result.status === "rejected");
 		const refreshedIssueIds = new Set(
 			successful.map((result) => result.issueId),
 		);
@@ -276,6 +277,7 @@ export class SnapshotService {
 			runs,
 			complete:
 				candidates.length <= max && successful.length === selected.length,
+			...(failure ? { error: failure.reason } : {}),
 		};
 	}
 
@@ -308,9 +310,9 @@ export class SnapshotService {
 		try {
 			const runResult = await this.fetchRuns(this.lastGood.issues ?? []);
 			this.lastGood.runs = runResult.runs;
-			sources.runs = runResult.complete
-				? { state: "ok", observedAt }
-				: {
+			if (runResult.complete) sources.runs = { state: "ok", observedAt };
+			else if ("error" in runResult) sources.runs = failedSource(sources.runs, runResult.error);
+			else sources.runs = {
 						state: "stale",
 						observedAt,
 						error: {

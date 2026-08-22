@@ -64,7 +64,33 @@ function output(command: CliCommand): unknown {
 	];
 }
 
+function outputWithInvalidTimestamp(command: CliCommand, source: "agents" | "runtimes" | "issues" | "runs"): unknown {
+	const value = structuredClone(output(command));
+	if (source === "agents" && command.key === "agents") (value as Array<Record<string, unknown>>)[0]!.updated_at = "invalid";
+	if (source === "runtimes" && command.key === "runtimes") (value as Array<Record<string, unknown>>)[0]!.last_seen_at = "invalid";
+	if (source === "issues" && command.key === "issues") ((value as { issues: Array<Record<string, unknown>> }).issues[0]!).updated_at = "invalid";
+	if (source === "runs" && command.key === "issueRuns") (value as Array<Record<string, unknown>>)[0]!.completed_at = "invalid";
+	return value;
+}
+
 describe("snapshot service", () => {
+	for (const source of ["agents", "runtimes", "issues", "runs"] as const) {
+		it(`retains last-good ${source} data after an invalid timestamp`, async () => {
+			let invalid = false;
+			const runner: CliRunner = {
+				async run(command) {
+					return invalid ? outputWithInvalidTimestamp(command, source) : output(command);
+				},
+			};
+			const service = new SnapshotService(runner, { now: () => new Date(timestamp) });
+			const first = await service.refresh();
+			invalid = true;
+			const degraded = await service.refresh();
+			expect(degraded.sources[source]).toMatchObject({ state: "stale", error: { code: "schema_mismatch" } });
+			expect(degraded[source]).toEqual(first[source]);
+		});
+	}
+
 	it("builds a normalized snapshot and retains last-good data on partial failure", async () => {
 		let failAgents = false;
 		let failRuns = false;
