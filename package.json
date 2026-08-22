@@ -8,9 +8,13 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run notices:check && npm run build:workspaces && npm run notices:copy",
+    "build:workspaces": "npm run build --workspaces --if-present",
     "test": "vitest run",
     "typecheck": "tsc -b",
+    "notices:generate": "node scripts/third-party-notices.mjs generate",
+    "notices:check": "node scripts/third-party-notices.mjs check",
+    "notices:copy": "node scripts/third-party-notices.mjs copy",
     "start": "npm run start:bridge",
     "start:bridge": "npm run start --workspace @multica-office/bridge",
     "dev:bridge": "npm run dev --workspace @multica-office/bridge",

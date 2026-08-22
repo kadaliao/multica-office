@@ -54,7 +54,7 @@ export function buildServer(
 		reply.headers({
 			"cache-control": "no-store",
 			"content-security-policy":
-				"default-src 'self'; script-src 'self' 'unsafe-eval'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'",
+				"default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'",
 			"referrer-policy": "no-referrer",
 			"x-content-type-options": "nosniff",
 		});

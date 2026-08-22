@@ -180,13 +180,25 @@ async function expectLabelsEndAtGraphemeBoundaries(page: import("@playwright/tes
 test("built release server delivers the runnable client and same-origin API", async ({ page }) => {
 	const response = await page.goto("/");
 	expect(response?.status()).toBe(200);
+	const csp = response?.headers()["content-security-policy"] ?? "";
+	expect(csp).toContain("script-src 'self'");
+	expect(csp).not.toContain("unsafe-eval");
 	await expect(page.getByRole("heading", { name: "Today's floor" })).toBeVisible();
+	await expect(page.locator(".office-scene")).toHaveAttribute("data-renderer", "webgl");
 	await expectNonBlankCanvas(page);
 	const health = await page.evaluate(async () => {
 		const result = await fetch("/healthz");
 		return { status: result.status, body: await result.json() as { status: string } };
 	});
 	expect(health).toEqual({ status: 200, body: expect.objectContaining({ status: "ok" }) });
+	const notices = await page.evaluate(async () => {
+		const result = await fetch("/THIRD_PARTY_NOTICES.txt");
+		return { status: result.status, body: await result.text() };
+	});
+	expect(notices.status).toBe(200);
+	expect(notices.body).toContain("pixi.js@8.20.0");
+	expect(notices.body).toContain("react@19.2.8");
+	expect(notices.body).toContain("fastify@5.12.1");
 });
 
 test("desktop office is interactive and visually populated", async ({ page }, testInfo) => {
