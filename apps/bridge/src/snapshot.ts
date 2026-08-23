@@ -66,7 +66,12 @@ function failedSource(previous: SourceStatus, error: unknown): SourceStatus {
 
 function changedPayload(snapshot: OfficeSnapshot): string {
 	return JSON.stringify({
-		sources: snapshot.sources,
+		sources: Object.fromEntries(
+			SOURCE_NAMES.map((name) => {
+				const { observedAt: _observedAt, ...source } = snapshot.sources[name];
+				return [name, source];
+			}),
+		),
 		agents: snapshot.agents,
 		runtimes: snapshot.runtimes,
 		issues: snapshot.issues,
@@ -237,7 +242,7 @@ export class SnapshotService {
 
 	private async fetchRuns(
 		issues: OfficeIssue[],
-	): Promise<{ runs: OfficeRun[]; complete: boolean }> {
+	): Promise<{ runs: OfficeRun[]; complete: boolean; error?: unknown }> {
 		const candidates = issues.filter(isActiveAgentIssue);
 		const max = this.options.maxRunIssues ?? 32;
 		if (!Number.isInteger(max) || max < 1)
@@ -263,19 +268,25 @@ export class SnapshotService {
 		const successful = settled.flatMap((result) =>
 			result.status === "fulfilled" ? [result.value] : [],
 		);
+		const failure = settled.find((result) => result.status === "rejected");
 		const refreshedIssueIds = new Set(
 			successful.map((result) => result.issueId),
 		);
-		const currentIssueIds = new Set(issues.map((issue) => issue.id));
+		const candidateIssueIds = new Set(candidates.map((issue) => issue.id));
 		const retained = (this.lastGood.runs ?? []).filter(
 			(run) =>
-				currentIssueIds.has(run.issueId) && !refreshedIssueIds.has(run.issueId),
+				candidateIssueIds.has(run.issueId)
+				&& !refreshedIssueIds.has(run.issueId),
 		);
-		const runs = [...retained, ...successful.flatMap((result) => result.runs)];
+		const runs = [...retained, ...successful.flatMap((result) => result.runs)]
+			.sort((left, right) =>
+				left.issueId.localeCompare(right.issueId) || left.id.localeCompare(right.id),
+			);
 		return {
 			runs,
 			complete:
 				candidates.length <= max && successful.length === selected.length,
+			...(failure ? { error: failure.reason } : {}),
 		};
 	}
 
@@ -308,9 +319,9 @@ export class SnapshotService {
 		try {
 			const runResult = await this.fetchRuns(this.lastGood.issues ?? []);
 			this.lastGood.runs = runResult.runs;
-			sources.runs = runResult.complete
-				? { state: "ok", observedAt }
-				: {
+			if (runResult.complete) sources.runs = { state: "ok", observedAt };
+			else if ("error" in runResult) sources.runs = failedSource(sources.runs, runResult.error);
+			else sources.runs = {
 						state: "stale",
 						observedAt,
 						error: {
@@ -343,8 +354,10 @@ export class SnapshotService {
 				{ now: new Date(generatedAt) },
 			),
 		};
-		if (changedPayload(candidate) === changedPayload(this.snapshot))
+		if (changedPayload(candidate) === changedPayload(this.snapshot)) {
+			this.snapshot = { ...candidate, sequence: this.snapshot.sequence };
 			return this.snapshot;
+		}
 
 		const previous = this.snapshot;
 		this.snapshot = candidate;

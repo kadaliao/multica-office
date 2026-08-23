@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
+import { fileURLToPath } from "node:url";
 import type { CliRunner } from "../src/runner.js";
 import { buildServer } from "../src/server.js";
 import { SnapshotService } from "../src/snapshot.js";
@@ -84,5 +85,28 @@ describe("loopback HTTP API", () => {
 		expect(allowedOrigin.headers["access-control-allow-origin"]).toBe(
 			"http://127.0.0.1:5173",
 		);
+
+		const sameOrigin = await server.inject({
+			method: "GET",
+			url: "/healthz",
+			headers: { host: "127.0.0.1:4317", origin: "http://127.0.0.1:4317" },
+		});
+		expect(sameOrigin.statusCode).toBe(200);
+		expect(sameOrigin.headers["access-control-allow-origin"]).toBeUndefined();
+	});
+
+	it("serves only files inside the configured built-client root", async () => {
+		const server = buildServer(new SnapshotService(runner), {
+			port: 4317,
+			staticRoot: fileURLToPath(new URL("../../web", import.meta.url)),
+		});
+		openApps.push(server);
+		const index = await server.inject({ method: "GET", url: "/index.html", headers: { host: "127.0.0.1:4317" } });
+		expect(index.statusCode).toBe(200);
+		expect(index.headers["content-type"]).toContain("text/html");
+		expect(index.body).toContain("Multica Office");
+
+		const missing = await server.inject({ method: "GET", url: "/missing.js", headers: { host: "127.0.0.1:4317" } });
+		expect(missing.statusCode).toBe(404);
 	});
 });

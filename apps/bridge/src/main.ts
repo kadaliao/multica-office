@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { buildServer } from "./server.js";
 import { SnapshotPoller } from "./poller.js";
 import { createCliRunner, resolveExecutable } from "./runner.js";
@@ -27,6 +28,7 @@ const service = new SnapshotService(runner);
 const poller = new SnapshotPoller(service);
 const server = buildServer(service, {
 	port,
+	staticRoot: fileURLToPath(new URL("../../web/dist", import.meta.url)),
 	...(process.env.OFFICE_DEV_ORIGIN
 		? { developmentOrigin: process.env.OFFICE_DEV_ORIGIN }
 		: {}),

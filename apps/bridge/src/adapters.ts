@@ -13,12 +13,18 @@ const nullableString = z
 	.optional()
 	.transform((value) => value ?? null);
 
+const timestamp = z.iso.datetime({ offset: true });
+const nullableTimestamp = timestamp
+	.nullable()
+	.optional()
+	.transform((value) => value ?? null);
+
 const rawAgentSchema = z.object({
 	id: z.uuid(),
 	name: z.string(),
 	runtime_id: nullableString,
 	status: z.string().optional().default("unknown"),
-	updated_at: z.string(),
+	updated_at: timestamp,
 });
 
 const rawRuntimeSchema = z.object({
@@ -26,7 +32,7 @@ const rawRuntimeSchema = z.object({
 	name: z.string().optional(),
 	custom_name: nullableString,
 	status: z.string().optional().default("unknown"),
-	last_seen_at: nullableString,
+	last_seen_at: nullableTimestamp,
 });
 
 const rawIssueSchema = z.object({
@@ -37,7 +43,7 @@ const rawIssueSchema = z.object({
 	priority: z.string().optional().default("none"),
 	assignee_type: nullableString,
 	assignee_id: nullableString,
-	updated_at: z.string(),
+	updated_at: timestamp,
 });
 
 const rawRunSchema = z.object({
@@ -46,8 +52,8 @@ const rawRunSchema = z.object({
 	agent_id: nullableString,
 	runtime_id: nullableString,
 	status: z.string(),
-	started_at: nullableString,
-	completed_at: nullableString,
+	started_at: nullableTimestamp,
+	completed_at: nullableTimestamp,
 });
 
 const issuePageSchema = z.object({
@@ -168,7 +174,8 @@ export function adaptRuns(input: unknown): OfficeRun[] {
 
 export function isActiveAgentIssue(issue: OfficeIssue): boolean {
 	return (
-		issue.assignee?.type === "agent" && !terminalIssueStatuses.has(issue.status)
+		(issue.assignee?.type === "agent" || issue.assignee?.type === "squad")
+		&& !terminalIssueStatuses.has(issue.status)
 	);
 }
 
@@ -188,6 +195,7 @@ export function mapAgentStates(
 	const runtimeById = new Map(runtimes.map((runtime) => [runtime.id, runtime]));
 	const runtimeStaleMs = options.runtimeStaleMs ?? 30_000;
 	const doneTtlMs = options.doneTtlMs ?? 15_000;
+	const now = options.now.getTime();
 
 	return agents.map(({ rawStatus, ...agent }) => {
 		const assignedIssues = issues.filter(
@@ -208,29 +216,34 @@ export function mapAgentStates(
 		);
 		const recentDone = relatedRuns.find((run) => {
 			if (run.status !== "completed" || !run.completedAt) return false;
-			return options.now.getTime() - Date.parse(run.completedAt) <= doneTtlMs;
+			const completedAt = Date.parse(run.completedAt);
+			const age = now - completedAt;
+			return Number.isFinite(now)
+				&& Number.isFinite(completedAt)
+				&& age >= 0
+				&& age <= doneTtlMs;
 		});
 		const runtime = agent.runtimeId
 			? runtimeById.get(agent.runtimeId)
 			: undefined;
-		const runtimeStale = runtime?.lastSeenAt
-			? options.now.getTime() - Date.parse(runtime.lastSeenAt) > runtimeStaleMs
-			: true;
+		const lastSeenAt = runtime?.lastSeenAt ? Date.parse(runtime.lastSeenAt) : Number.NaN;
+		const runtimeAge = now - lastSeenAt;
+		const runtimeStale = !Number.isFinite(now)
+			|| !Number.isFinite(lastSeenAt)
+			|| runtimeAge > runtimeStaleMs;
 
 		let state: OfficeState = "idle";
 		if (!runtime || runtime.state !== "online" || runtimeStale)
 			state = "offline";
-		else if (rawStatus === "working" || running) state = "working";
+		else if (running || (rawStatus === "working" && activeIssue)) state = "working";
 		else if (blocked) state = "blocked";
 		else if (waiting || activeIssue) state = "queued";
 		else if (recentDone) state = "done";
 
 		const selectedRun = running ?? waiting ?? recentDone;
-		const selectedIssue =
-			activeIssue ??
-			(selectedRun
+		const selectedIssue = selectedRun
 				? issues.find((issue) => issue.id === selectedRun.issueId)
-				: undefined);
+				: activeIssue;
 		return {
 			...agent,
 			state,

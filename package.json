@@ -2,20 +2,32 @@
   "name": "multica-office",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run notices:check && npm run build:workspaces && npm run notices:copy",
+    "build:workspaces": "npm run build --workspaces --if-present",
     "test": "vitest run",
     "typecheck": "tsc -b",
+    "notices:generate": "node scripts/third-party-notices.mjs generate",
+    "notices:check": "node scripts/third-party-notices.mjs check",
+    "notices:copy": "node scripts/third-party-notices.mjs copy",
+    "start": "npm run start:bridge",
     "start:bridge": "npm run start --workspace @multica-office/bridge",
-    "dev:bridge": "npm run dev --workspace @multica-office/bridge"
+    "dev:bridge": "npm run dev --workspace @multica-office/bridge",
+    "dev:web": "npm run dev --workspace @multica-office/web",
+    "test:e2e": "npm run build && playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.55.0",
     "@types/node": "^24.0.0",
+    "@types/pngjs": "^6.0.5",
+    "jsdom": "^26.1.0",
+    "pngjs": "^7.0.0",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"

@@ -14,6 +14,17 @@ const issueId = "33333333-3333-4333-8333-333333333333";
 const runId = "44444444-4444-4444-8444-444444444444";
 
 describe("CLI adapters", () => {
+	it("rejects malformed timestamps while preserving nullable timestamp fields", () => {
+		expect(() => adaptAgents([{ id: agentId, name: "Ada", runtime_id: null, updated_at: "not-a-date" }])).toThrow();
+		expect(() => adaptRuntimes([{ id: runtimeId, status: "online", last_seen_at: "2026-02-30T00:00:00Z" }])).toThrow();
+		expect(() => adaptIssuePage({ issues: [{ id: issueId, identifier: "OFF-1", title: "Bad date", status: "todo", updated_at: "yesterday" }], has_more: false, offset: 0, limit: 100 })).toThrow();
+		expect(() => adaptRuns([{ id: runId, issue_id: issueId, status: "running", started_at: "invalid", completed_at: null }])).toThrow();
+		expect(() => adaptRuns([{ id: runId, issue_id: issueId, status: "completed", started_at: null, completed_at: "invalid" }])).toThrow();
+		expect(adaptRuntimes([{ id: runtimeId, status: "online", last_seen_at: null }])[0]?.lastSeenAt).toBeNull();
+		expect(adaptRuns([{ id: runId, issue_id: issueId, status: "queued", started_at: null, completed_at: null }])[0]).toMatchObject({ startedAt: null, completedAt: null });
+		expect(adaptAgents([{ id: agentId, name: "Ada", runtime_id: null, updated_at: "2026-01-01T08:00:20+08:00" }])[0]?.updatedAt).toBe("2026-01-01T08:00:20+08:00");
+	});
+
 	it("rebuilds allowlisted objects and drops sensitive raw fields", () => {
 		const agents = adaptAgents([
 			{
@@ -117,5 +128,65 @@ describe("CLI adapters", () => {
 				{ now },
 			)[0]?.state,
 		).toBe("offline");
+	});
+
+	it("handles runtime freshness and recent completions with finite-safe boundaries", () => {
+		const agent = adaptAgents([{ id: agentId, name: "Ada", runtime_id: runtimeId, status: "idle", updated_at: now.toISOString() }])[0]!;
+		const runtime = adaptRuntimes([{ id: runtimeId, name: "Local", status: "online", last_seen_at: "2025-12-31T23:59:50Z" }])[0]!;
+		const state = (lastSeenAt: string | null, mappedNow = now) => mapAgentStates([agent], [{ ...runtime, lastSeenAt }], [], [], { now: mappedNow })[0]?.state;
+		expect(state("2025-12-31T23:59:50Z")).toBe("idle");
+		expect(state("2025-12-31T23:59:49.999Z")).toBe("offline");
+		expect(state("2026-01-01T00:01:00Z")).toBe("idle");
+		expect(state("invalid")).toBe("offline");
+		expect(state(null)).toBe("offline");
+		expect(state(now.toISOString(), new Date(Number.NaN))).toBe("offline");
+
+		const completed = {
+			id: runId,
+			issueId,
+			agentId,
+			runtimeId,
+			status: "completed" as const,
+			startedAt: null,
+			completedAt: "2026-01-01T00:00:05Z",
+		};
+		const completedState = (completedAt: string | null) => mapAgentStates([agent], [{ ...runtime, lastSeenAt: now.toISOString() }], [], [{ ...completed, completedAt }], { now })[0]?.state;
+		expect(completedState("2026-01-01T00:00:05Z")).toBe("done");
+		expect(completedState("2026-01-01T00:00:04.999Z")).toBe("idle");
+		expect(completedState("2026-01-01T00:00:21Z")).toBe("idle");
+		expect(completedState("invalid")).toBe("idle");
+		expect(completedState(null)).toBe("idle");
+	});
+
+	it("uses a squad run's issue instead of an unrelated direct assignment", () => {
+		const agents = adaptAgents([{ id: agentId, name: "Ada", runtime_id: runtimeId, status: "working", updated_at: now.toISOString() }]);
+		const runtimes = adaptRuntimes([{ id: runtimeId, name: "Local", status: "online", last_seen_at: now.toISOString() }]);
+		const squadIssueId = "55555555-5555-4555-8555-555555555555";
+		const issues = adaptIssuePage({
+			issues: [
+				{ id: issueId, identifier: "OFF-1", title: "Direct", status: "todo", assignee_type: "agent", assignee_id: agentId, updated_at: now.toISOString() },
+				{ id: squadIssueId, identifier: "OFF-2", title: "Squad", status: "in_progress", assignee_type: "squad", assignee_id: "66666666-6666-4666-8666-666666666666", updated_at: now.toISOString() },
+			],
+			has_more: false,
+			offset: 0,
+			limit: 100,
+		}).issues;
+		const runs = adaptRuns([{ id: runId, issue_id: squadIssueId, agent_id: agentId, runtime_id: runtimeId, status: "running", started_at: now.toISOString(), completed_at: null }]);
+
+		expect(mapAgentStates(agents, runtimes, issues, runs, { now })[0]).toMatchObject({
+			state: "working",
+			issueId: squadIssueId,
+			runId,
+		});
+	});
+
+	it("does not keep raw working state after the agent's issue becomes terminal", () => {
+		const agents = adaptAgents([{ id: agentId, name: "Ada", runtime_id: runtimeId, status: "working", updated_at: now.toISOString() }]);
+		const runtimes = adaptRuntimes([{ id: runtimeId, name: "Local", status: "online", last_seen_at: now.toISOString() }]);
+		expect(mapAgentStates(agents, runtimes, [], [], { now })[0]).toMatchObject({
+			state: "idle",
+			issueId: null,
+			runId: null,
+		});
 	});
 });
