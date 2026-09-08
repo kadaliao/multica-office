@@ -11,6 +11,7 @@ export interface ServerOptions {
 	maxSseClients?: number;
 	onClientCount?: (count: number) => void;
 	staticRoot?: string;
+	tailnetOrigin?: string;
 }
 
 function sseFrame(
@@ -38,18 +39,45 @@ export function buildServer(
 ): FastifyInstance {
 	const app = Fastify({ logger: false, bodyLimit: 1_024 });
 	const clients = new Set<NodeJS.WritableStream>();
+	// SSE responses never finish on their own, so drain them before HTTP close waits.
+	app.addHook("preClose", async () => {
+		for (const client of clients) client.end();
+	});
 	const expectedHost = `127.0.0.1:${options.port}`;
 	const sameOrigin = `http://${expectedHost}`;
+	const tailnetHost = options.tailnetOrigin
+		? new URL(options.tailnetOrigin).host
+		: undefined;
 
 	app.addHook("onRequest", async (request, reply) => {
-		if (request.headers.host !== expectedHost) {
+		const host = request.headers.host;
+		const isLoopbackRequest = host === expectedHost;
+		const isTailnetRequest = tailnetHost !== undefined && host === tailnetHost;
+		if (!isLoopbackRequest && !isTailnetRequest) {
 			await reply.code(403).send({ error: "forbidden" });
 			return;
 		}
 		const origin = request.headers.origin;
-		if (origin && origin !== sameOrigin && origin !== options.developmentOrigin) {
+		const allowedOrigin = isTailnetRequest ? options.tailnetOrigin : sameOrigin;
+		if (
+			origin &&
+			origin !== allowedOrigin &&
+			!(isLoopbackRequest && origin === options.developmentOrigin)
+		) {
 			await reply.code(403).send({ error: "forbidden" });
 			return;
+		}
+		if (isTailnetRequest) {
+			const login = request.headers["tailscale-user-login"];
+			if (
+				request.raw.socket.remoteAddress !== "127.0.0.1" ||
+				typeof login !== "string" ||
+				login.length < 1 ||
+				login.length > 320
+			) {
+				await reply.code(403).send({ error: "forbidden" });
+				return;
+			}
 		}
 		reply.headers({
 			"cache-control": "no-store",
@@ -58,7 +86,11 @@ export function buildServer(
 			"referrer-policy": "no-referrer",
 			"x-content-type-options": "nosniff",
 		});
-		if (options.developmentOrigin && origin === options.developmentOrigin) {
+		if (
+			isLoopbackRequest &&
+			options.developmentOrigin &&
+			origin === options.developmentOrigin
+		) {
 			reply.header("access-control-allow-origin", options.developmentOrigin);
 			reply.header("vary", "Origin");
 		}

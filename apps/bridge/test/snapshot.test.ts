@@ -142,6 +142,27 @@ describe("snapshot service", () => {
 		});
 	});
 
+	it("preserves last-known agent state when failed reads outlive the heartbeat window", async () => {
+		let now = new Date(timestamp);
+		let failing = false;
+		const service = new SnapshotService({
+			async run(command) {
+				if (failing) throw new Error("read unavailable");
+				return output(command);
+			},
+		}, { now: () => now });
+		const healthy = await service.refresh();
+		expect(healthy.agents[0]?.state).toBe("working");
+		failing = true;
+		now = new Date("2026-01-01T00:05:20Z");
+		const unavailable = await service.refresh();
+		expect(unavailable.sources.runtimes.state).toBe("stale");
+		expect(unavailable.agents).toEqual(healthy.agents);
+		failing = false;
+		now = new Date(timestamp);
+		expect((await service.refresh()).sources.runtimes.state).toBe("ok");
+	});
+
 	it("polls squad issues and clears retained runs after a terminal transition", async () => {
 		let issueStatus = "in_progress";
 		let runCalls = 0;

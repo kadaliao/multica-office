@@ -35,7 +35,7 @@ export function stationLabelMaxWidth(cellWidth: number): number {
 	return Math.max(32, Math.min(112, cellWidth - 8));
 }
 
-export function truncateMeasuredLabel(name: string, maxWidth: number, measure: (value: string) => number): MeasuredLabel {
+export function truncateMeasuredLabel(name: string, maxWidth: number, measure: (value: string) => number, placement: "end" | "middle" = "end"): MeasuredLabel {
 	const measuredWidth = measure(name);
 	if (Number.isFinite(measuredWidth) && measuredWidth >= 0 && measuredWidth <= maxWidth) {
 		return { text: name, width: measuredWidth, truncated: false };
@@ -47,8 +47,18 @@ export function truncateMeasuredLabel(name: string, maxWidth: number, measure: (
 	}
 	let best = ellipsis;
 	let bestWidth = ellipsisWidth;
+	const graphemes = stationLabelGraphemes(name);
+	if (placement === "middle") {
+		for (let kept = 1; kept < graphemes.length; kept += 1) {
+			const tailLength = Math.floor(kept / 2);
+			const candidate = `${graphemes.slice(0, kept - tailLength).join("")}${ellipsis}${tailLength ? graphemes.slice(-tailLength).join("") : ""}`;
+			const width = measure(candidate);
+			if (Number.isFinite(width) && width >= 0 && width <= maxWidth) { best = candidate; bestWidth = width; }
+		}
+		return { text: best, width: bestWidth, truncated: true };
+	}
 	let prefix = "";
-	for (const grapheme of stationLabelGraphemes(name)) {
+	for (const grapheme of graphemes) {
 		prefix += grapheme;
 		const candidate = `${prefix}${ellipsis}`;
 		const candidateWidth = measure(candidate);

@@ -1,7 +1,7 @@
 {
   "name": "multica-office",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "type": "module",
   "workspaces": [
@@ -18,6 +18,9 @@
     "notices:copy": "node scripts/third-party-notices.mjs copy",
     "start": "npm run start:bridge",
     "start:bridge": "npm run start --workspace @multica-office/bridge",
+    "start:tailnet": "node scripts/tailnet.mjs start",
+    "tailnet:status": "node scripts/tailnet.mjs status",
+    "tailnet:cleanup": "node scripts/tailnet.mjs cleanup",
     "dev:bridge": "npm run dev --workspace @multica-office/bridge",
     "dev:web": "npm run dev --workspace @multica-office/web",
     "test:e2e": "npm run build && playwright test"

@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { readAccessConfiguration } from "./access.js";
 import { buildServer } from "./server.js";
 import { SnapshotPoller } from "./poller.js";
 import { createCliRunner, resolveExecutable } from "./runner.js";
@@ -22,6 +23,7 @@ if (!executableInput) {
 }
 
 const port = readPort();
+const access = readAccessConfiguration(process.env);
 const executable = await resolveExecutable(executableInput);
 const runner = createCliRunner({ executable });
 const service = new SnapshotService(runner);
@@ -32,6 +34,7 @@ const server = buildServer(service, {
 	...(process.env.OFFICE_DEV_ORIGIN
 		? { developmentOrigin: process.env.OFFICE_DEV_ORIGIN }
 		: {}),
+	...(access.tailnetOrigin ? { tailnetOrigin: access.tailnetOrigin } : {}),
 	onClientCount: (count) => poller.setClientCount(count),
 });
 

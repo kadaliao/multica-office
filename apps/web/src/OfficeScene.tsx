@@ -51,7 +51,7 @@ function measureStationLabels(agents: OfficeAgent[], layout: OfficeLayout): Stat
 	if (!context) return { labels: agents.map(() => ""), widths: agents.map(() => 0), maxWidth: 0, fit: false };
 	context.font = STATION_LABEL_FONT;
 	const maxWidth = stationLabelMaxWidth(layout.cellWidth);
-	const measured = agents.map((agent) => truncateMeasuredLabel(agent.name, maxWidth, (value) => context.measureText(value).width));
+	const measured = agents.map((agent) => truncateMeasuredLabel(agent.name, maxWidth, (value) => context.measureText(value).width, "middle"));
 	const labels = measured.map(({ text }) => text);
 	const widths = measured.map(({ width }) => width);
 	const bounds = widths.map((width, index) => ({
@@ -141,8 +141,8 @@ function buildOffice(
 	onSelect: (id: string) => void,
 	labels: string[],
 ): AnimatedAgent[] {
-	const width = app.renderer.width / app.renderer.resolution;
-	const height = app.renderer.height / app.renderer.resolution;
+	// Pixi's screen is already in logical (CSS) pixels, independent of resolution.
+	const { width, height } = app.screen;
 	const layout = computeOfficeLayout(agents.length, width, height);
 	const scene = new Container();
 	furniture(scene, width, height);
@@ -298,6 +298,8 @@ export function OfficeScene({ agents, selectedId, onSelect }: { agents: OfficeAg
 					return;
 				}
 				app.canvas.className = "office-canvas";
+				app.renderer.events.autoPreventDefault = false;
+				app.canvas.style.touchAction = "pan-y pinch-zoom";
 				app.canvas.setAttribute("aria-label", "Interactive Multica office floor");
 				host.appendChild(app.canvas);
 				appRef.current = app;

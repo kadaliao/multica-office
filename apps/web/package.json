@@ -1,6 +1,6 @@
 {
   "name": "@multica-office/web",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
-    "@multica-office/contracts": "0.1.0",
+    "@multica-office/contracts": "0.2.0",
     "lucide-react": "^0.544.0",
     "pixi.js": "^8.13.2",
     "react": "^19.1.1",

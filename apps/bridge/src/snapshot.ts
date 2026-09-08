@@ -346,7 +346,9 @@ export class SnapshotService {
 		};
 		const candidate: OfficeSnapshot = {
 			...base,
-			agents: mapAgentStates(
+			agents: sources.agents.state !== "ok" || sources.runtimes.state !== "ok"
+				? this.snapshot.agents
+				: mapAgentStates(
 				this.lastGood.agents ?? [],
 				base.runtimes,
 				base.issues,

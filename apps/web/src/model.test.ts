@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fixtureSnapshot } from "./fixtures.js";
-import { filterAgents, issueForAgent, requiresAuthentication, runtimeLabelForAgent, sourceProblems, timeAgo } from "./model.js";
+import { filterAgents, hasUnavailableAgentData, issueForAgent, requiresAuthentication, runtimeLabelForAgent, sourceProblems, timeAgo } from "./model.js";
 
 describe("office view model", () => {
 	it("filters every mapped office state", () => {
@@ -53,5 +53,19 @@ describe("office view model", () => {
 		expect(timeAgo("2026-08-21T10:01:00Z", now)).toBe("0s ago");
 		expect(timeAgo("invalid", now)).toBe("unavailable");
 		expect(timeAgo("2026-08-21T09:59:40Z", Number.NaN)).toBe("unavailable");
+	});
+
+	it("does not treat failed agent or runtime reads as valid availability", () => {
+		expect(hasUnavailableAgentData(fixtureSnapshot)).toBe(false);
+		for (const source of ["agents", "runtimes"] as const) {
+			expect(hasUnavailableAgentData({
+				...fixtureSnapshot,
+				sources: { ...fixtureSnapshot.sources, [source]: { state: "stale" } },
+			})).toBe(true);
+		}
+		expect(hasUnavailableAgentData({
+			...fixtureSnapshot,
+			sources: { ...fixtureSnapshot.sources, issues: { state: "stale" } },
+		})).toBe(false);
 	});
 });

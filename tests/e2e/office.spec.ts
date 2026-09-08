@@ -5,7 +5,7 @@ import { PNG } from "pngjs";
 import type { CliRunner } from "../../apps/bridge/src/runner.js";
 import { buildServer } from "../../apps/bridge/src/server.js";
 import { SnapshotService } from "../../apps/bridge/src/snapshot.js";
-import { stationLabelGraphemes } from "../../apps/web/src/officeSceneLayout.js";
+import { computeOfficeLayout, STATION_BOUNDS, stationLabelGraphemes } from "../../apps/web/src/officeSceneLayout.js";
 
 const consoleErrors = new WeakMap<import("@playwright/test").Page, string[]>();
 const pageErrors = new WeakMap<import("@playwright/test").Page, string[]>();
@@ -159,7 +159,7 @@ async function expectMeasuredStationLabelsDoNotOverlap(page: import("@playwright
 		return { labels, widths: bounds.map(({ width }) => width), maxWidth, edgeViolations, metricMismatches, adjacentOverlaps };
 	});
 	expect(geometry.labels.length).toBeGreaterThan(0);
-	expect(geometry.labels.every((label) => label.endsWith("…"))).toBe(true);
+	expect(geometry.labels.every((label) => label.includes("…"))).toBe(true);
 	expect(geometry.widths.every((width) => width <= geometry.maxWidth)).toBe(true);
 	expect(geometry.edgeViolations).toBe(0);
 	expect(geometry.metricMismatches).toBe(0);
@@ -171,9 +171,10 @@ async function expectLabelsEndAtGraphemeBoundaries(page: import("@playwright/tes
 	const names = await page.locator(".agent-copy strong").allTextContents();
 	expect(names).toHaveLength(labels.length);
 	for (const [index, label] of labels.entries()) {
-		const prefix = label.endsWith("…") ? label.slice(0, -1) : label;
+		const [prefix, suffix = ""] = label.split("…");
 		const graphemes = stationLabelGraphemes(names[index]!);
-		expect(graphemes.some((_grapheme, count) => graphemes.slice(0, count + 1).join("") === prefix)).toBe(true);
+		expect(Array.from({ length: graphemes.length + 1 }, (_, count) => graphemes.slice(0, count).join("")).includes(prefix!)).toBe(true);
+		expect(Array.from({ length: graphemes.length + 1 }, (_, count) => graphemes.slice(count).join("")).includes(suffix)).toBe(true);
 	}
 }
 
@@ -535,8 +536,168 @@ test("empty, degraded, and offline states give a recovery path", async ({ page }
 	await expect(page.getByText("The office is ready")).toBeHidden();
 	await page.goto("/?fixture=stale-auth-required");
 	await expect(page.getByText(/multica login/)).toBeVisible();
-	await expect(page.getByRole("heading", { name: "Mira" })).toBeVisible();
+	await expect(page.getByRole("heading", { name: "Office data is unavailable" })).toBeVisible();
+	await expect(page.getByRole("heading", { name: "Mira" })).toBeHidden();
 	await page.goto("/?fixture=offline");
 	await expect(page.getByRole("heading", { name: "Office bridge is offline" })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Reconnect" })).toBeVisible();
+});
+
+test("stale CLI data cannot appear as a live floor of offline agents", async ({ page }) => {
+	await page.goto("/?fixture=data-unavailable");
+	await expect(page.getByRole("heading", { name: "Office data is unavailable" })).toBeVisible();
+	await expect(page.getByText(/Last successful update/)).toBeVisible();
+	await expect(page.locator(".connection-live")).toHaveCount(0);
+	await expect(page.locator(".agent-row")).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+});
+
+test("agent data failure and recovery update the live office", async ({ page }) => {
+	await installControllableEventSource(page);
+	await page.route("**/v1/snapshot", (route) => route.fulfill({
+		status: 200,
+		contentType: "application/json",
+		body: JSON.stringify(liveSnapshot(1)),
+	}));
+	await page.goto("/");
+	await expect(page.locator(".connection-live")).toBeVisible();
+	await expect(page.locator(".agent-row")).toHaveCount(1);
+
+	const unavailable = liveSnapshot(2);
+	unavailable.sources.runtimes = {
+		state: "stale",
+		error: { code: "unknown", retryable: true, message: "Local data could not be read." },
+		observedAt: unavailable.generatedAt,
+	};
+	await page.evaluate((next) => (window as unknown as { __emitOfficeSnapshot: (snapshot: unknown) => void }).__emitOfficeSnapshot(next), unavailable);
+	await expect(page.getByRole("heading", { name: "Office data is unavailable" })).toBeVisible();
+	await expect(page.locator(".agent-row")).toHaveCount(0);
+	await expect(page.locator(".connection-live")).toHaveCount(0);
+
+	await page.evaluate((next) => (window as unknown as { __emitOfficeSnapshot: (snapshot: unknown) => void }).__emitOfficeSnapshot(next), liveSnapshot(3));
+	await expect(page.getByRole("heading", { name: "Office data is unavailable" })).toBeHidden();
+	await expect(page.locator(".connection-live")).toBeVisible();
+	await expect(page.locator(".agent-row")).toHaveCount(1);
+});
+
+test("desktop wheel scrolling reaches the last seat and roster entry", async ({ page }) => {
+	await page.setViewportSize({ width: 1280, height: 720 });
+	await page.goto("/?fixture=ready&agents=25");
+	await expect(page.locator(".office-scene")).toHaveAttribute("data-agent-count", "25");
+	const frame = page.locator(".scene-frame");
+	const bounds = (await frame.boundingBox())!;
+	expect(bounds.y + bounds.height).toBeLessThanOrEqual(720);
+	await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+	await page.mouse.wheel(0, 10000);
+	await expect.poll(() => frame.evaluate((e) => Math.abs(e.scrollHeight - e.clientHeight - e.scrollTop))).toBeLessThanOrEqual(1);
+	expect(await frame.evaluate((e) => e.scrollTop)).toBeGreaterThan(0);
+	const inspector = (await page.locator(".inspector").boundingBox())!;
+	await page.mouse.move(inspector.x + inspector.width / 2, inspector.y + inspector.height / 2);
+	await page.mouse.wheel(0, 10000);
+	await expect(page.locator(".agent-row").last()).toBeInViewport();
+});
+
+for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 844 }]) {
+	for (const deviceScaleFactor of [1, 1.25, 2, 3]) {
+		test.describe(`complete last station at ${viewport.width}px and DPR ${deviceScaleFactor}`, () => {
+			test.use({ viewport, deviceScaleFactor, reducedMotion: "reduce" });
+			test("renders the full body and name and accepts selection", async ({ page }, testInfo) => {
+				await page.goto("/?fixture=ready&agents=19");
+				const scene = page.locator(".office-scene");
+				await expect(scene).toHaveAttribute("data-renderer-revision", "1");
+				const frame = page.locator(".scene-frame");
+				const verifyLastStation = async () => {
+					await frame.scrollIntoViewIfNeeded();
+					const dimensions = await frame.evaluate((e) => ({ width: e.clientWidth, height: e.clientHeight }));
+					const layout = computeOfficeLayout(19, dimensions.width, dimensions.height);
+					const canvas = page.locator("canvas.office-canvas");
+					await expect.poll(() => canvas.evaluate((e) => ({ width: e.clientWidth, height: e.clientHeight }))).toEqual({ width: layout.width, height: layout.height });
+					await frame.evaluate((e) => { e.scrollTop = 0; });
+					const frameBounds = (await frame.boundingBox())!;
+					await page.mouse.move(frameBounds.x + frameBounds.width / 2, frameBounds.y + frameBounds.height / 2);
+					await page.mouse.wheel(0, 10000);
+					await expect.poll(() => frame.evaluate((e) => Math.abs(e.scrollHeight - e.clientHeight - e.scrollTop))).toBeLessThanOrEqual(1);
+					const last = layout.stations.at(-1)!;
+					const canvasBounds = (await canvas.boundingBox())!;
+					const x = canvasBounds.x + last.x;
+					const y = canvasBounds.y + last.y;
+					expect(y - STATION_BOUNDS.top).toBeGreaterThanOrEqual(frameBounds.y + 1);
+					expect(y + STATION_BOUNDS.bottom).toBeLessThanOrEqual(frameBounds.y + frameBounds.height - 1);
+					// Inspect rendered pixels, not just layout metadata: the last agent's
+					// green body and dark name must both exist inside the visible scrollport.
+					const pixels = PNG.sync.read(await frame.screenshot({ scale: "css" }));
+					const localX = Math.round(x - frameBounds.x);
+					const localY = Math.round(y - frameBounds.y);
+					const bodyOffset = ((localY + 52) * pixels.width + localX) * 4;
+					expect(Array.from(pixels.data.subarray(bodyOffset, bodyOffset + 3)), "last avatar body is rendered").toEqual([44, 122, 104]);
+					let namePixels = 0;
+					for (let py = localY + 74; py < localY + 92; py += 1) {
+						for (let px = localX - 45; px <= localX + 45; px += 1) {
+							const offset = (py * pixels.width + px) * 4;
+							if (pixels.data[offset]! < 70 && pixels.data[offset + 1]! < 80 && pixels.data[offset + 2]! < 70) namePixels += 1;
+						}
+					}
+					expect(namePixels, "last agent name is rendered in full below the body").toBeGreaterThan(20);
+					await page.mouse.click(x, y + 45);
+					await expect(page.locator(".selected-agent h2")).toHaveText("Mira 4");
+				};
+				await verifyLastStation();
+				await frame.screenshot({ path: testInfo.outputPath("complete-last-station.png"), scale: "css" });
+				await page.setViewportSize({ width: viewport.width + 100, height: viewport.height });
+				await expect(scene).toHaveAttribute("data-layout-width", String(await frame.evaluate((e) => e.clientWidth)));
+				await verifyLastStation();
+			});
+		});
+	}
+}
+
+test("nicknames persist locally while preserving full Multica names", async ({ page }) => {
+	await page.goto("/?fixture=long-names");
+	await expect(page.getByLabel("Office nickname")).toBeVisible();
+	await page.getByLabel("Office nickname").fill("小码");
+	await page.getByRole("button", { name: "Save", exact: true }).click();
+	await expect(page.getByRole("heading", { name: "小码", exact: true })).toBeVisible();
+	await expect(page.locator(".original-name")).toContainText("Product Engineer - Codex - MacBook Pro");
+	await expect.poll(async () => JSON.parse((await page.locator(".office-scene").getAttribute("data-station-labels"))!)[0]).toBe("小码");
+	await page.reload();
+	await expect(page.getByRole("heading", { name: "小码", exact: true })).toBeVisible();
+	await page.getByRole("button", { name: "Reset", exact: true }).click();
+	await expect(page.getByRole("heading", { name: "Product Engineer - Codex - MacBook Pro", exact: true })).toBeVisible();
+});
+
+test("nickname storage failure keeps the office usable", async ({ page }) => {
+	await page.addInitScript(() => { Object.defineProperty(window, "localStorage", { get() { throw new Error("Storage disabled"); } }); });
+	await page.goto("/?fixture=ready");
+	await page.getByLabel("Office nickname").fill("小米");
+	await page.getByRole("button", { name: "Save", exact: true }).click();
+	await expect(page.getByRole("heading", { name: "小米", exact: true })).toBeVisible();
+	await expect(page.getByText("Applied for this tab only. Browser storage is unavailable.")).toBeVisible();
+});
+
+test("shared role prefixes produce distinct model and device seat labels", async ({ page }) => {
+	await installControllableEventSource(page);
+	await page.route("**/v1/snapshot", (route) => route.fulfill({
+		contentType: "application/json",
+		body: JSON.stringify(liveSnapshot(1, ["Product Engineer - Codex - Mac mini", "Product Engineer - Codex - MacBook Pro", "Product Engineer - Claude - Mac mini", "Product Engineer - Claude - MacBook Pro"])),
+	}));
+	await page.goto("/");
+	await expect(page.locator(".office-scene")).toHaveAttribute("data-agent-count", "4");
+	const labels = JSON.parse((await page.locator(".office-scene").getAttribute("data-station-labels"))!) as string[];
+	expect(new Set(labels).size).toBe(4);
+	expect(labels.every((label) => !label.startsWith("Product"))).toBe(true);
+});
+
+test.describe("touch scrolling", () => {
+	test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+	test("touch gestures scroll the canvas and the full mobile roster", async ({ page }) => {
+		await page.goto("/?fixture=ready&agents=25");
+		await expect(page.locator(".office-scene")).toHaveAttribute("data-renderer-revision", "1");
+		const session = await page.context().newCDPSession(page);
+		try {
+			await session.send("Input.synthesizeScrollGesture", { x: 195, y: 470, yDistance: -3000, speed: 3000, gestureSourceType: "touch" });
+			await expect.poll(() => page.locator(".scene-frame").evaluate((e) => e.scrollTop)).toBeGreaterThan(0);
+			await session.send("Input.synthesizeScrollGesture", { x: 5, y: 700, yDistance: -8000, speed: 5000, gestureSourceType: "touch" });
+			await expect(page.locator(".agent-row").last()).toBeInViewport();
+		} finally { await session.detach(); }
+	});
 });

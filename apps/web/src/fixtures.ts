@@ -129,5 +129,16 @@ export function fixtureFor(name: string, agentCount?: number): OfficeSnapshot | 
 			},
 		},
 	};
+	if (name === "data-unavailable") return {
+		...fixtureSnapshot,
+		agents: fixtureSnapshot.agents.map((agent) => ({ ...agent, state: "offline" })),
+		sources: Object.fromEntries(
+			Object.keys(fixtureSnapshot.sources).map((source) => [source, {
+				state: "stale",
+				observedAt: "2026-01-01T00:00:00Z",
+				error: { code: "unknown", retryable: true, message: "Local data could not be read." },
+			}]),
+		) as OfficeSnapshot["sources"],
+	};
 	return null;
 }

@@ -45,6 +45,10 @@ export function requiresAuthentication(snapshot: OfficeSnapshot): boolean {
 	);
 }
 
+export function hasUnavailableAgentData(snapshot: OfficeSnapshot): boolean {
+	return snapshot.sources.agents.state !== "ok" || snapshot.sources.runtimes.state !== "ok";
+}
+
 export function timeAgo(value: string, now = Date.now()): string {
 	const timestamp = Date.parse(value);
 	if (!Number.isFinite(now) || !Number.isFinite(timestamp)) return "unavailable";
